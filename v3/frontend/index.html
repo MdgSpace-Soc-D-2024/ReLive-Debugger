@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ReLive Debugger</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            height: 100vh;
+        }
+        .sidebar {
+            width: 20%;
+            background-color: #2c3e50;
+            color: white;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+        .sidebar h2 {
+            text-align: center;
+        }
+        .content {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        .code-area {
+            flex: 1;
+            background-color: #ecf0f1;
+            padding: 20px;
+            position: relative;
+            overflow-y: scroll;
+            font-family: monospace;
+        }
+        .code-line {
+            padding: 5px;
+            border-radius: 5px;
+        }
+        .code-line.highlight {
+            background-color: #f1c40f;
+        }
+        .output {
+            background-color: #34495e;
+            color: white;
+            padding: 10px;
+            overflow-y: auto;
+        }
+        .graph {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 300px;
+            height: 200px;
+            background-color: #3498db;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.2em;
+        }
+        button {
+            margin: 5px 0;
+            padding: 10px;
+            background-color: #1abc9c;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #16a085;
+        }
+        #debug-console-container {
+            margin-top: 20px;
+        }
+        
+        #debug-console {
+            font-family: monospace;
+            font-size: 14px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            padding: 10px;
+            height: 200px;
+            overflow-y: auto;
+            border-radius: 5px;
+            border: 1px solid #333;
+        }
+        
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h2>Debugger</h2>
+        <button onclick="startDebugger()">Start Debugger</button>
+        <button onclick="step()">Step</button>
+        <button onclick="continueExecution()">Continue</button>
+        <button onclick="quitDebugger()">Quit</button>
+        <input type="file" id="fileInput" accept=".py" />
+        <textarea id="breakpoints" rows="5" placeholder="Set breakpoints (e.g., 5, 10, 15)"></textarea>
+        <button onclick="setBreakpoints()">Set Breakpoints</button>
+    </div>
+    <div class="content">
+        <div class="code-area" id="codeArea">
+            <div class="graph">Graphical View</div>
+        </div>
+        <div id="debug-console-container">
+            <h3>Debug Console</h3>
+            <pre id="debug-console" style="background-color: #1e1e1e; color: #ffffff; padding: 10px; height: 200px; overflow-y: auto; border: 1px solid #ccc;">
+                <!-- Output will appear here -->
+            </pre>
+        </div>
+        
+        <div class="output" id="outputBox">Output will appear here...</div>
+    </div>
+
+    <script>
+        const codeArea = document.getElementById('codeArea');
+        const outputBox = document.getElementById('outputBox');
+        let codeLines = [];
+
+        // File input event listener to handle file selection
+        document.getElementById('fileInput').addEventListener('change', handleFileSelect, false);
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file && file.name.endsWith('.py')) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    // Read the content of the Python file
+                    codeLines = e.target.result.split('\n');
+                    updateCodeArea();
+                };
+                reader.readAsText(file);
+            } else {
+                alert("Please select a valid Python (.py) file.");
+            }
+        }
+
+        function updateCodeArea() {
+            // Clear current code area
+            codeArea.innerHTML = '';
+
+            // Populate code area with new code
+            codeLines.forEach((line, index) => {
+                const div = document.createElement('div');
+                div.className = 'code-line';
+                div.textContent = `${index + 1}: ${line}`;
+                codeArea.appendChild(div);
+            });
+        }
+
+        let currentLine = 0;
+
+        function highlightLine(line) {
+            const lines = document.querySelectorAll('.code-line');
+            lines.forEach(l => l.classList.remove('highlight'));
+            if (line >= 0 && line < lines.length) {
+                lines[line].classList.add('highlight');
+                lines[line].scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+
+        function pollDebuggerStatus() {
+            fetch("/status")
+                .then(response => response.json())
+                .then(data => {
+                    const { output, exception, stack_frames } = data;
+        
+                    // Display output in debug console
+                    const debugConsole = document.getElementById("debug-console");
+                    debugConsole.textContent = output;
+        
+                    // Display exception (if any)
+                    if (exception) {
+                        debugConsole.textContent += `\n[Error]: ${exception}`;
+                    }
+        
+                    // Highlight the current line in the code viewer
+                    if (stack_frames.length > 0) {
+                        const currentFrame = stack_frames[stack_frames.length - 1];
+                        highlightLine(currentFrame.line); // Custom function to highlight line
+                    }
+                })
+                .catch(err => console.error(err));
+        }
+        
+        setInterval(pollDebuggerStatus, 1000); // Poll every second
+        
+        async function startDebugger() {
+            if (codeLines.length === 0) {
+                outputBox.textContent = "No Python code loaded. Please upload a file.";
+                return;
+            }
+
+            outputBox.textContent = "Starting debugger...";
+            const response = await fetch('/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code: codeLines.join('\n') })
+            });
+            const data = await response.json();
+            outputBox.textContent = data.message;
+        }
+
+        async function step() {
+            const response = await fetch('/control', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'step' })
+            });
+            const data = await response.json();
+            highlightLine(currentLine++);
+        }
+
+        async function continueExecution() {
+            outputBox.textContent = "Continuing execution...";
+            const response = await fetch('/control', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'continue' })
+            });
+            const data = await response.json();
+            outputBox.textContent = data.message;
+        }
+
+        async function quitDebugger() {
+            outputBox.textContent = "Quitting debugger...";
+            const response = await fetch('/control', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'quit' })
+            });
+            const data = await response.json();
+            outputBox.textContent = data.message;
+        }
+
+        async function setBreakpoints() {
+            const breakpoints = document.getElementById('breakpoints').value
+                .split(',')
+                .map(line => parseInt(line.trim()));
+
+            const response = await fetch('/breakpoints', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ breakpoints })
+            });
+
+            const data = await response.json();
+            outputBox.textContent = data.message;
+        }
+    </script>
+</body>
+</html>
