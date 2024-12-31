@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ReLive Debugger</title>
+</head>
+<body>
+    <h1>ReLive Debugger</h1>
+    <button onclick="loadSnapshot(0)">Load Snapshot 0</button>
+    <button onclick="loadSnapshot(1)">Load Snapshot 1</button>
+    <div id="snapshot-display"></div>
+    <script>
+        function loadSnapshot(index) {
+            fetch("/load_snapshot", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ index: index })
+            })
+            .then(response => response.json())
+            .then(data => {
+                const display = document.getElementById("snapshot-display");
+                if (data.status === "success") {
+                    const snapshot = data.snapshot;
+                    display.innerHTML = `
+                        <p><strong>File to be debugged:</strong> ${snapshot.filename}</p>
+                        <p><strong>Breakpoint:</strong> ${snapshot.line_number}</p>
+                        <p><strong>Variables:</strong> ${JSON.stringify(snapshot.local_variables)}</p>
+                    `;
+                } else {
+                    display.innerHTML = `<p style="color: red;">${data.message}</p>`;
+                }
+            })
+            .catch(error => console.error("Error:", error));
+        }
+        
+    </script>
+    
+</body>
+</html>
